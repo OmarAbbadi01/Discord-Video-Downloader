@@ -4,7 +4,7 @@ using Discord.WebSocket;
 
 namespace Main;
 
-public class Bot
+public class Bot : IAsyncDisposable
 {
     private readonly DiscordSocketClient _client;
 
@@ -20,12 +20,32 @@ public class Bot
         _client.SlashCommandExecuted += OnSlashCommandAsync;
     }
 
-    public async Task RunAsync()
+    public async Task RunAsync(CancellationToken cancellationToken)
     {
-        var token = Environment.GetEnvironmentVariable("DISCORD_BOT_TOKEN");
-        await _client.LoginAsync(TokenType.Bot, token);
+        var discordToken = Environment.GetEnvironmentVariable("DISCORD_BOT_TOKEN");
+        if (discordToken is null)
+        {
+            Console.WriteLine("Discord token is missing from env!");
+            return;
+        }
+        
+        await _client.LoginAsync(TokenType.Bot, discordToken);
         await _client.StartAsync();
-        await Task.Delay(-1);
+        
+        try
+        {
+            // Wait until shutdown is requested
+            await Task.Delay(-1, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine("Graceful shutdown triggered.");
+        }
+        finally
+        {
+            await _client.StopAsync();
+            await DisposeAsync();
+        }
     }
 
     private static Task LogAsync(LogMessage msg)
@@ -48,7 +68,7 @@ public class Bot
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Command sync error: {ex.Message}");
+            Console.WriteLine($"Command sync error: {ex.Message}");
         }
     }
 
@@ -85,7 +105,9 @@ public class Bot
         }
         catch (Exception)
         {
-            await command.FollowupAsync($"❌ Unable to download video. File could be too large.  URL: {url}. Sent by: {command.User.Mention}");
+            await command.FollowupAsync($"❌ Unable to download video. File could be too large. \n" +
+                                        $" URL: {url}. \n" +
+                                        $" Sent by: {command.User.Mention}");
         }
         finally
         {
@@ -95,5 +117,11 @@ public class Bot
             if (File.Exists(tempFilename + ".part"))
                 File.Delete(tempFilename + ".part");
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _client.DisposeAsync();
+        GC.SuppressFinalize(this);
     }
 }
